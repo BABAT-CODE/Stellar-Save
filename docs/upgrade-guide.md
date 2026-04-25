@@ -1,133 +1,140 @@
 # Upgrade Guide
 
-This document describes how to safely upgrade the StellarSave Soroban contract and how the automated upgrade test suite protects backward compatibility.
+This document describes how to safely upgrade the Stellar-Save Soroban contract, verify backward compatibility, and run the automated upgrade test suite.
 
 ## Overview
 
-Soroban contracts are upgraded by deploying a new WASM binary to the same contract address using `stellar contract install` + `stellar contract upgrade`. Because all on-chain state persists across upgrades, every new version must be able to read data written by every previous version.
+Soroban contracts are upgraded via `update_current_contract_wasm`, which replaces the WASM bytecode in-place while leaving all persistent storage intact. Because storage is preserved, every upgrade must maintain backward compatibility with existing data.
 
-## Upgrade Test Suite
+## Pre-upgrade checklist
 
-The upgrade tests live in `contracts/stellar-save/src/upgrade_tests.rs` and are registered as the `upgrade_tests` module in `lib.rs`. They run automatically on every push or pull request that touches `contracts/**` via the `.github/workflows/upgrade-tests.yml` workflow.
+1. All existing tests pass on the current branch.
+2. The upgrade test suite passes (see [Running the tests](#running-the-tests)).
+3. The new WASM builds cleanly for `wasm32-unknown-unknown`.
+4. Any new storage keys use additive variants — never reuse or rename existing `StorageKey` enum variants.
+5. Any new `#[contracttype]` structs are additive; existing structs keep the same field order and types.
 
-### Test categories
+## Storage compatibility rules
 
-| Category | What it checks |
-|---|---|
-| Storage backward compatibility | Data seeded in the v0 schema is deserialised correctly by the current code |
-| API stability | All public entry-points (`get_member_count`, `update_config`, `validate_contribution_amount`) accept v0 data without panicking |
-| Migration defaults | New fields added to existing structs carry safe zero/false defaults on old records |
-| Performance regression | Key read paths remain O(1) regardless of how many members or contributions exist |
+| Rule | Reason |
+|------|--------|
+| Never remove a `StorageKey` variant | Existing entries become unreadable |
+| Never reorder fields in a `#[contracttype]` struct | XDR encoding is positional |
+| Never change a field's type | Deserialisation will panic at runtime |
+| Add new fields only at the end of a struct | Preserves XDR compatibility |
+| New enum variants must be appended | Existing discriminants must not shift |
 
-### Running locally
+## Running the tests
+
+### All upgrade tests
 
 ```bash
-# Run only the upgrade tests
-cargo test --manifest-path contracts/stellar-save/Cargo.toml upgrade_tests -- --test-threads=1
-
-# Run with coverage
-cargo llvm-cov --manifest-path contracts/stellar-save/Cargo.toml \
-  -- upgrade_tests --test-threads=1
+cargo test \
+  --manifest-path contracts/stellar-save/Cargo.toml \
+  upgrade_tests \
+  -- --test-threads=1
 ```
 
-## Upgrade Procedure
-
-### 1. Pre-upgrade checklist
-
-- [ ] All upgrade tests pass on the new branch (`cargo test upgrade_tests`)
-- [ ] Full test suite passes (`cargo test -- --test-threads=1`)
-- [ ] WASM binary builds cleanly for `wasm32-unknown-unknown`
-- [ ] Storage schema changes are documented in the section below
-- [ ] Any new struct fields have `#[contracttype]` and a sensible default
-
-### 2. Build the new WASM
+### By category
 
 ```bash
+# Data migration
+cargo test --manifest-path contracts/stellar-save/Cargo.toml \
+  upgrade_tests::upgrade_tests::test_migration -- --test-threads=1
+
+# API compatibility
+cargo test --manifest-path contracts/stellar-save/Cargo.toml \
+  upgrade_tests::upgrade_tests::test_api -- --test-threads=1
+
+# Performance regression
+cargo test --manifest-path contracts/stellar-save/Cargo.toml \
+  upgrade_tests::upgrade_tests::test_perf -- --test-threads=1
+```
+
+### CI
+
+The `.github/workflows/upgrade-tests.yml` workflow runs automatically on every push or pull request that touches `contracts/`. It runs each category as a separate step so failures are easy to identify.
+
+## Test categories
+
+### Data migration tests
+
+These tests write storage entries directly (bypassing the contract client) to simulate data that was written by a previous version of the contract. They then read the data back through the current contract API to confirm nothing was broken.
+
+Covered scenarios:
+- Group structs survive an upgrade (`test_migration_group_data_survives_upgrade`)
+- Member profiles survive an upgrade (`test_migration_member_profile_survives_upgrade`)
+- Contribution records survive an upgrade (`test_migration_contribution_record_survives_upgrade`)
+- `GroupStatus` discriminants are stable (`test_migration_group_status_enum_compatibility`)
+
+### API compatibility tests
+
+These tests call every public function that existed in v1 and assert that the function signature and return type are unchanged.
+
+Covered functions:
+- `get_group` — returns `GroupNotFound` for missing IDs
+- `get_member_count` — returns 0 for empty groups
+- `is_member` — returns false for non-members
+- `get_group_balance` — returns 0 when no contributions exist
+- `get_total_groups` — reflects the group-id counter
+
+### Performance regression tests
+
+These tests call key read operations and assert they complete without error, using `env.cost_estimate().resources()` to capture the `InvocationResources` after each call. When running against native (non-WASM) test contracts the instruction count is 0; against a WASM build it reflects actual VM execution cost.
+
+To get meaningful instruction counts in CI, build the contract as WASM and run tests with `--features testutils` against the WASM binary. The current tests assert `instructions >= 0` as a sanity check; tighten the upper bound as you establish baselines.
+
+Covered operations:
+- `get_group`
+- `is_member`
+- `get_group_balance`
+
+## Upgrade procedure
+
+### Testnet
+
+```bash
+# 1. Build the new WASM
 cargo build \
   --manifest-path contracts/stellar-save/Cargo.toml \
   --target wasm32-unknown-unknown \
   --release
-```
 
-The optimised binary is at:
-```
-target/wasm32-unknown-unknown/release/stellar_save.wasm
-```
-
-### 3. Install and upgrade on testnet
-
-```bash
-# Install the new WASM and capture the new hash
-NEW_HASH=$(stellar contract install \
+# 2. Upload the new WASM and get the hash
+stellar contract upload \
   --network testnet \
   --source deployer \
-  --wasm target/wasm32-unknown-unknown/release/stellar_save.wasm)
+  --wasm target/wasm32-unknown-unknown/release/stellar_save.wasm
 
-echo "New WASM hash: $NEW_HASH"
-
-# Upgrade the live contract to the new WASM
+# 3. Upgrade the deployed contract
 stellar contract invoke \
   --network testnet \
   --source deployer \
-  --id "$CONTRACT_ID" \
+  --id <CONTRACT_ID> \
   -- upgrade \
-  --new_wasm_hash "$NEW_HASH"
+  --new_wasm_hash <WASM_HASH>
+
+# 4. Smoke-test the upgraded contract
+./scripts/smoke_test.sh
 ```
 
-### 4. Verify after upgrade
+### Mainnet
 
-```bash
-# Smoke-test: read an existing group to confirm storage is intact
-stellar contract invoke \
-  --network testnet \
-  --id "$CONTRACT_ID" \
-  -- get_member_count \
-  --group_id 1
-```
+Follow the same steps as testnet, substituting `--network mainnet` and using the mainnet deployer identity. Mainnet upgrades require the `production` GitHub environment approval gate defined in `ci.yml`.
 
-### 5. Mainnet upgrade
+## Rolling back
 
-Repeat steps 2–4 against `--network mainnet`. Mainnet upgrades require the `production` GitHub environment approval gate defined in `ci.yml`.
+Soroban does not support automatic rollback. To revert an upgrade:
 
-## Storage Schema
+1. Re-upload the previous WASM and obtain its hash.
+2. Call `upgrade` with the old hash from the admin account.
+3. Verify storage is still intact by running the upgrade test suite against the reverted contract.
 
-### v0.1.0 (current)
+## Adding new tests
 
-| Key builder | Type | Notes |
-|---|---|---|
-| `group_data(id)` | `Group` | Core group config and state |
-| `group_status(id)` | `GroupStatus` | Lifecycle state enum |
-| `group_members(id)` | `Vec<Address>` | Ordered member list |
-| `member_profile(id, addr)` | `MemberProfile` | Per-member metadata |
-| `contribution_individual(id, cycle, addr)` | `ContributionRecord` | Single contribution |
-| `contribution_cycle_total(id, cycle)` | `i128` | Pre-computed cycle sum |
-| `contribution_cycle_count(id, cycle)` | `u32` | Pre-computed contributor count |
-| `group_balance(id)` | `i128` | Running group balance |
-| `next_group_id()` | `u64` | Monotonic ID counter |
-| `contract_config()` | `ContractConfig` | Global limits and admin |
+When you add a new storage key or public function:
 
-### Adding a new field to an existing struct
-
-1. Add the field with a default value using `Option<T>` or a primitive that defaults to `0`/`false`.
-2. Add a test in `upgrade_tests.rs` that seeds the old record (without the new field) and asserts the default is correct after deserialization.
-3. Update the schema table above.
-
-### Adding a new storage key
-
-1. Add the key variant to `StorageKey` in `storage.rs`.
-2. Add a builder method to `StorageKeyBuilder`.
-3. No migration is needed — the key simply won't exist on old deployments and callers must handle `None`.
-
-## Rollback
-
-Soroban does not support automatic rollback. If a bad upgrade is deployed:
-
-1. Build the previous WASM from the last known-good git tag.
-2. Install it and upgrade back using the same procedure above.
-3. If storage was mutated in an incompatible way, a manual data-repair transaction may be required — contact the contract admin.
-
-## Version History
-
-| Version | Date | Changes |
-|---|---|---|
-| 0.1.0 | 2026-04-25 | Initial release — XLM-only ROSCA groups |
+1. Add a migration test that seeds the old data shape and reads it back.
+2. Add an API compatibility test that calls the function with v1 arguments.
+3. Add a performance test if the function is on a hot path.
+4. Update this document with the new scenarios.
