@@ -78,6 +78,19 @@ pub struct GroupStatusChanged {
     pub changed_at: u64,
 }
 
+/// Event emitted when a contribution is accepted within the grace period
+/// (after the hard deadline but before grace_period_seconds elapses).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GracePeriodContribution {
+    pub group_id: u64,
+    pub contributor: Address,
+    pub amount: i128,
+    pub cycle: u32,
+    pub seconds_late: u64,
+    pub contributed_at: u64,
+}
+
 /// Event emitted when a group's metadata is updated.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -555,6 +568,26 @@ impl EventEmitter {
             unpaused_at,
         };
         env.events().publish(("group_unpaused",), event);
+    }
+
+    pub fn emit_grace_period_contribution(
+        env: &Env,
+        group_id: u64,
+        contributor: Address,
+        amount: i128,
+        cycle: u32,
+        seconds_late: u64,
+        contributed_at: u64,
+    ) {
+        let event = GracePeriodContribution {
+            group_id,
+            contributor,
+            amount,
+            cycle,
+            seconds_late,
+            contributed_at,
+        };
+        env.events().publish(("grace_period_contribution",), event);
     }
 
     pub fn emit_penalty_applied(
