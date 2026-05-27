@@ -295,6 +295,15 @@ pub struct RefundIssued {
     pub refunded_at: u64,
 }
 
+/// Event emitted when a group is dissolved by unanimous member vote.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupDissolved {
+    pub group_id: u64,
+    pub dissolved_at: u64,
+    pub total_refunded: i128,
+}
+
 impl EventEmitter {
     pub fn emit_group_created(
         env: &Env,
@@ -435,6 +444,20 @@ impl EventEmitter {
             refunded_at,
         };
         env.events().publish(("refund_issued",), event);
+    }
+
+    pub fn emit_group_dissolved(
+        env: &Env,
+        group_id: u64,
+        dissolved_at: u64,
+        total_refunded: i128,
+    ) {
+        let event = GroupDissolved {
+            group_id,
+            dissolved_at,
+            total_refunded,
+        };
+        env.events().publish(("group_dissolved",), event);
     }
 
     pub fn emit_group_status_changed(

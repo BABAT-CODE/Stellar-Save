@@ -183,6 +183,14 @@ pub enum ContributionKey {
     /// Member vote record: CONTRIB_VOTE_{group_id}_{address}
     /// Tracks whether a specific member has voted on the pending amount change.
     MemberVote(u64, Address),
+
+    /// Dissolution vote count: CONTRIB_DISSOLVE_COUNT_{group_id}
+    /// Tracks how many members have voted to dissolve the group.
+    DissolveVoteCount(u64),
+
+    /// Member dissolution vote: CONTRIB_DISSOLVE_VOTE_{group_id}_{address}
+    /// Tracks whether a specific member has voted to dissolve the group.
+    DissolveVote(u64, Address),
 }
 
 /// Storage keys for payout records.
@@ -422,6 +430,16 @@ impl StorageKeyBuilder {
     /// Creates a key for tracking whether a member has voted on the pending amount change.
     pub fn contribution_member_vote(group_id: u64, address: Address) -> StorageKey {
         StorageKey::Contribution(ContributionKey::MemberVote(group_id, address))
+    }
+
+    /// Creates a key for the dissolution vote count of a group.
+    pub fn dissolve_vote_count(group_id: u64) -> StorageKey {
+        StorageKey::Contribution(ContributionKey::DissolveVoteCount(group_id))
+    }
+
+    /// Creates a key for tracking whether a member has voted to dissolve the group.
+    pub fn dissolve_vote(group_id: u64, address: Address) -> StorageKey {
+        StorageKey::Contribution(ContributionKey::DissolveVote(group_id, address))
     }
 
     // Payout key builders

@@ -1008,6 +1008,160 @@ impl StellarSaveContract {
 
         Ok(balance)
     }
+
+    /// Casts a member's vote to dissolve the group.
+    ///
+    /// When all members have voted, the group is dissolved: its status is set to
+    /// `Cancelled` and every member who has **not yet received a payout** is
+    /// refunded their contributions for the current cycle.
+    ///
+    /// # Errors
+    /// - `GroupNotFound` - Group doesn't exist
+    /// - `InvalidState` - Group is not Active or Paused
+    /// - `NotMember` - Caller is not a member of the group
+    /// - `AlreadyVotedDissolve` - Caller has already voted
+    /// - `GroupAlreadyDissolved` - Group is already in a terminal state
+    pub fn vote_dissolve(
+        env: Env,
+        group_id: u64,
+        caller: Address,
+    ) -> Result<(), StellarSaveError> {
+        caller.require_auth();
+
+        let group_key = StorageKeyBuilder::group_data(group_id);
+        let mut group = env
+            .storage()
+            .persistent()
+            .get::<_, Group>(&group_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+
+        let status_key = StorageKeyBuilder::group_status(group_id);
+        let status: GroupStatus = env
+            .storage()
+            .persistent()
+            .get(&status_key)
+            .unwrap_or(GroupStatus::Pending);
+
+        match status {
+            GroupStatus::Cancelled | GroupStatus::Completed => {
+                return Err(StellarSaveError::GroupAlreadyDissolved);
+            }
+            GroupStatus::Active | GroupStatus::Paused => {}
+            GroupStatus::Pending => return Err(StellarSaveError::InvalidState),
+        }
+
+        let member_key = StorageKeyBuilder::member_profile(group_id, caller.clone());
+        if !env.storage().persistent().has(&member_key) {
+            return Err(StellarSaveError::NotMember);
+        }
+
+        let vote_key = StorageKeyBuilder::dissolve_vote(group_id, caller.clone());
+        if env.storage().persistent().has(&vote_key) {
+            return Err(StellarSaveError::AlreadyVotedDissolve);
+        }
+        env.storage().persistent().set(&vote_key, &true);
+
+        let count_key = StorageKeyBuilder::dissolve_vote_count(group_id);
+        let vote_count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        let new_count = vote_count.checked_add(1).ok_or(StellarSaveError::Overflow)?;
+        env.storage().persistent().set(&count_key, &new_count);
+
+        // Not unanimous yet — nothing more to do
+        if new_count < group.member_count {
+            return Ok(());
+        }
+
+        // === Unanimous vote: dissolve the group ===
+        group.status = GroupStatus::Cancelled;
+        group.is_active = false;
+        env.storage().persistent().set(&group_key, &group);
+        env.storage()
+            .persistent()
+            .set(&status_key, &GroupStatus::Cancelled);
+
+        let token_config_key = StorageKeyBuilder::group_token_config(group_id);
+        let token_config: crate::group::TokenConfig = env
+            .storage()
+            .persistent()
+            .get(&token_config_key)
+            .ok_or(StellarSaveError::GroupNotFound)?;
+        let token_client =
+            soroban_sdk::token::TokenClient::new(&env, &token_config.token_address);
+
+        let current_cycle = group.current_cycle;
+        let now = env.ledger().timestamp();
+        let mut total_refunded: i128 = 0;
+
+        let members_key = StorageKeyBuilder::group_members(group_id);
+        let members: soroban_sdk::Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&members_key)
+            .unwrap_or(soroban_sdk::Vec::new(&env));
+
+        for member in members.iter() {
+            // Skip members who already received their payout
+            let payout_pos_key =
+                StorageKeyBuilder::member_payout_eligibility(group_id, member.clone());
+            let payout_position: u32 =
+                match env.storage().persistent().get::<_, u32>(&payout_pos_key) {
+                    Some(pos) => pos,
+                    None => continue,
+                };
+
+            let recipient_key = StorageKeyBuilder::payout_recipient(group_id, payout_position);
+            let already_paid = env
+                .storage()
+                .persistent()
+                .get::<_, Address>(&recipient_key)
+                .map(|r| r == member)
+                .unwrap_or(false);
+
+            if already_paid {
+                continue;
+            }
+
+            // Refund current-cycle contribution if it exists and hasn't been refunded
+            let contrib_key = StorageKeyBuilder::contribution_individual(
+                group_id,
+                current_cycle,
+                member.clone(),
+            );
+            let refund_amount: i128 = match env
+                .storage()
+                .persistent()
+                .get::<_, crate::contribution::ContributionRecord>(&contrib_key)
+            {
+                Some(record) => record.amount,
+                None => continue,
+            };
+
+            let refund_key =
+                StorageKeyBuilder::refund_record(group_id, current_cycle, member.clone());
+            if env.storage().persistent().has(&refund_key) {
+                continue;
+            }
+
+            token_client.transfer(&env.current_contract_address(), &member, &refund_amount);
+
+            let refund_record = crate::refund::RefundRecord {
+                group_id,
+                member: member.clone(),
+                cycle: current_cycle,
+                amount: refund_amount,
+                refunded_at: now,
+            };
+            env.storage().persistent().set(&refund_key, &refund_record);
+
+            EventEmitter::emit_refund_issued(&env, group_id, member, refund_amount, current_cycle, now);
+
+            total_refunded = total_refunded.saturating_add(refund_amount);
+        }
+
+        EventEmitter::emit_group_dissolved(&env, group_id, now, total_refunded);
+
+        Ok(())
+    }
 }
 
 impl StellarSaveContract {
@@ -12697,6 +12851,206 @@ mod tests {
             false
         });
         assert!(found, "group_archived event should have been emitted");
+    }
+
+    // =========================================================================
+    // vote_dissolve tests
+    // =========================================================================
+
+    fn setup_active_group_for_dissolve(
+        env: &Env,
+        group_id: u64,
+        creator: &Address,
+        members: &[Address],
+    ) {
+        let mut group = Group::new(
+            group_id,
+            creator.clone(),
+            10_000_000,
+            604800,
+            members.len() as u32,
+            2,
+            env.ledger().timestamp(),
+            0,
+        );
+        group.status = GroupStatus::Active;
+        group.is_active = true;
+        group.member_count = members.len() as u32;
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(group_id), &group);
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_status(group_id), &GroupStatus::Active);
+
+        let mut member_vec = soroban_sdk::Vec::new(env);
+        for (i, member) in members.iter().enumerate() {
+            member_vec.push_back(member.clone());
+            let profile = MemberProfile {
+                address: member.clone(),
+                group_id,
+                payout_position: i as u32,
+                joined_at: env.ledger().timestamp(),
+                auto_contribute_enabled: false,
+            };
+            env.storage()
+                .persistent()
+                .set(&StorageKeyBuilder::member_profile(group_id, member.clone()), &profile);
+            // Store payout eligibility (position)
+            env.storage().persistent().set(
+                &StorageKeyBuilder::member_payout_eligibility(group_id, member.clone()),
+                &(i as u32),
+            );
+        }
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_members(group_id), &member_vec);
+    }
+
+    #[test]
+    fn test_vote_dissolve_group_not_found() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+        let caller = Address::generate(&env);
+        let result = client.try_vote_dissolve(&999, &caller);
+        assert_eq!(result, Err(Ok(StellarSaveError::GroupNotFound)));
+    }
+
+    #[test]
+    fn test_vote_dissolve_not_member() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let member1 = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        setup_active_group_for_dissolve(&env, 1, &creator, &[creator.clone(), member1.clone()]);
+
+        let result = client.try_vote_dissolve(&1, &outsider);
+        assert_eq!(result, Err(Ok(StellarSaveError::NotMember)));
+    }
+
+    #[test]
+    fn test_vote_dissolve_already_voted() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let member1 = Address::generate(&env);
+        setup_active_group_for_dissolve(&env, 1, &creator, &[creator.clone(), member1.clone()]);
+
+        // First vote succeeds (only 1 of 2 votes, no dissolution yet)
+        client.vote_dissolve(&1, &creator);
+
+        // Second vote from same member should fail
+        let result = client.try_vote_dissolve(&1, &creator);
+        assert_eq!(result, Err(Ok(StellarSaveError::AlreadyVotedDissolve)));
+    }
+
+    #[test]
+    fn test_vote_dissolve_invalid_state_pending() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let member1 = Address::generate(&env);
+        // Set up as Pending
+        setup_active_group_for_dissolve(&env, 1, &creator, &[creator.clone(), member1.clone()]);
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_status(1), &GroupStatus::Pending);
+
+        let result = client.try_vote_dissolve(&1, &creator);
+        assert_eq!(result, Err(Ok(StellarSaveError::InvalidState)));
+    }
+
+    #[test]
+    fn test_vote_dissolve_already_dissolved() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let member1 = Address::generate(&env);
+        setup_active_group_for_dissolve(&env, 1, &creator, &[creator.clone(), member1.clone()]);
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_status(1), &GroupStatus::Cancelled);
+
+        let result = client.try_vote_dissolve(&1, &creator);
+        assert_eq!(result, Err(Ok(StellarSaveError::GroupAlreadyDissolved)));
+    }
+
+    #[test]
+    fn test_vote_dissolve_partial_vote_no_dissolution() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let member1 = Address::generate(&env);
+        setup_active_group_for_dissolve(&env, 1, &creator, &[creator.clone(), member1.clone()]);
+
+        // Only one of two members votes — group should remain Active
+        client.vote_dissolve(&1, &creator);
+
+        let status: GroupStatus = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_status(1))
+            .unwrap();
+        assert_eq!(status, GroupStatus::Active);
+    }
+
+    #[test]
+    fn test_vote_dissolve_unanimous_sets_cancelled() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let member1 = Address::generate(&env);
+        setup_active_group_for_dissolve(&env, 1, &creator, &[creator.clone(), member1.clone()]);
+
+        // Store token config (needed for dissolution path, even without contributions)
+        let token_address = Address::generate(&env);
+        let token_config = crate::group::TokenConfig {
+            token_address: token_address.clone(),
+            token_decimals: 7,
+        };
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_token_config(1), &token_config);
+
+        // Both members vote — triggers dissolution
+        client.vote_dissolve(&1, &creator);
+        client.vote_dissolve(&1, &member1);
+
+        let status: GroupStatus = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_status(1))
+            .unwrap();
+        assert_eq!(status, GroupStatus::Cancelled);
+
+        let group: Group = env
+            .storage()
+            .persistent()
+            .get(&StorageKeyBuilder::group_data(1))
+            .unwrap();
+        assert_eq!(group.status, GroupStatus::Cancelled);
+        assert!(!group.is_active);
     }
 }
 
