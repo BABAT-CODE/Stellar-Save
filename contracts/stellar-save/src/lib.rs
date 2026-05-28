@@ -3427,7 +3427,12 @@ impl StellarSaveContract {
         Ok(reminders_emitted)
     }
 
-    pub fn join_group(env: Env, group_id: u64, member: Address) -> Result<(), StellarSaveError> {
+    pub fn join_group(
+        env: Env,
+        group_id: u64,
+        member: Address,
+        referrer: Option<Address>,
+    ) -> Result<(), StellarSaveError> {
         // Verify caller authorization
         member.require_auth();
 
@@ -3517,6 +3522,21 @@ impl StellarSaveContract {
         // Update group member count
         group.member_count += 1;
         env.storage().persistent().set(&group_key, &group);
+
+        // Referral tracking: store mapping and emit event if referrer provided
+        if let Some(ref referrer_addr) = referrer {
+            let referral_key = StorageKeyBuilder::member_referral(group_id, member.clone());
+            env.storage()
+                .persistent()
+                .set(&referral_key, referrer_addr);
+            EventEmitter::emit_member_referred(
+                &env,
+                group_id,
+                member.clone(),
+                referrer_addr.clone(),
+                timestamp,
+            );
+        }
 
         // Emit event
         EventEmitter::emit_member_joined(&env, group_id, member, group.member_count, timestamp);
@@ -6252,7 +6272,7 @@ mod tests {
         env.storage().persistent().set(&members_key, &members);
 
         // Test: New member joins
-        client.join_group(&group_id, &new_member);
+        client.join_group(&group_id, &new_member, &None);
 
         // Assert: Member profile created
         let member_key = StorageKeyBuilder::member_profile(group_id, new_member.clone());
@@ -6288,7 +6308,7 @@ mod tests {
         let member = Address::generate(&env);
 
         // Test: Try to join non-existent group
-        client.join_group(&999, &member);
+        client.join_group(&999, &member, &None);
     }
 
     // Task 6.3: Test joining when already a member
@@ -6328,7 +6348,7 @@ mod tests {
         env.storage().persistent().set(&member_key, &member_profile);
 
         // Test: Member tries to join again
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &member, &None);
     }
 
     // Task 6.4: Test joining when group is full
@@ -6358,7 +6378,7 @@ mod tests {
             .set(&status_key, &GroupStatus::Pending);
 
         // Test: Try to join full group
-        client.join_group(&group_id, &new_member);
+        client.join_group(&group_id, &new_member, &None);
     }
 
     // Task 6.5: Test joining when group is already active
@@ -6387,7 +6407,7 @@ mod tests {
             .set(&status_key, &GroupStatus::Active);
 
         // Test: Try to join active group
-        client.join_group(&group_id, &new_member);
+        client.join_group(&group_id, &new_member, &None);
     }
 
     // Task 6.6: Test payout position assignment
@@ -6425,14 +6445,14 @@ mod tests {
         env.storage().persistent().set(&members_key, &members);
 
         // Test: Member2 joins (should get position 2)
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &member2, &None);
 
         let payout_key2 = StorageKeyBuilder::member_payout_eligibility(group_id, member2.clone());
         let position2: u32 = env.storage().persistent().get(&payout_key2).unwrap();
         assert_eq!(position2, 2);
 
         // Test: Member3 joins (should get position 3)
-        client.join_group(&group_id, &member3);
+        client.join_group(&group_id, &member3, &None);
 
         let payout_key3 = StorageKeyBuilder::member_payout_eligibility(group_id, member3.clone());
         let position3: u32 = env.storage().persistent().get(&payout_key3).unwrap();
@@ -8945,7 +8965,7 @@ mod tests {
         let creator = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         let mut group: Group = env
             .storage()
@@ -8972,7 +8992,7 @@ mod tests {
         let cycle_duration = 3600u64;
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         let mut group: Group = env
             .storage()
@@ -9001,8 +9021,8 @@ mod tests {
         let cycle_duration = 3600u64;
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let mut group: Group = env
             .storage()
@@ -9036,8 +9056,8 @@ mod tests {
         let cycle_duration = 3600u64;
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let mut group: Group = env
             .storage()
@@ -9075,8 +9095,8 @@ mod tests {
         let cycle_duration = 3600u64;
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let mut group: Group = env
             .storage()
@@ -9126,8 +9146,8 @@ mod tests {
         let member = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let recipient_key = StorageKeyBuilder::payout_recipient(group_id, 0);
         env.storage().persistent().set(&recipient_key, &creator);
@@ -9147,8 +9167,8 @@ mod tests {
         let member = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let mut group: Group = env
             .storage()
@@ -9175,8 +9195,8 @@ mod tests {
         let member = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let result = client.validate_payout_recipient(&group_id, &creator);
         assert_eq!(result, true);
@@ -9519,7 +9539,7 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Setup: Create a group with 5 payouts
         let mut group: Group = env
@@ -9561,7 +9581,7 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Setup: Create a group with 5 payouts
         let mut group: Group = env
@@ -9649,8 +9669,8 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Setup: Create a group with 20 payouts
         let mut group: Group = env
@@ -9704,8 +9724,8 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &cycle_duration, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Setup: Create payouts out of order in storage
         let mut group: Group = env
@@ -9758,7 +9778,7 @@ mod tests {
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
         // Add member to group
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &member, &None);
 
         // Member hasn't received any payout yet
         let result = client.get_member_payout(&group_id, &member);
@@ -9780,7 +9800,7 @@ mod tests {
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
         // Add member to group
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &member, &None);
 
         // Simulate a payout to the member in cycle 0
         let payout = PayoutRecord::new(member.clone(), group_id, 0, 300, env.ledger().timestamp());
@@ -9819,8 +9839,8 @@ mod tests {
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
         // Add members to group
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         // Simulate payouts across multiple cycles
         let payout1 =
@@ -9875,8 +9895,8 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         let result = client.try_get_member_payout(&999, &member);
         assert_eq!(result, Err(Ok(StellarSaveError::GroupNotFound)));
@@ -9927,7 +9947,7 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         let mut group: Group = env
             .storage()
@@ -9961,9 +9981,9 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         let mut group: Group = env
             .storage()
@@ -10112,9 +10132,9 @@ mod tests {
         let member2 = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         let queue = client.get_payout_queue(&group_id);
         assert_eq!(queue.len(), 3);
@@ -10135,9 +10155,9 @@ mod tests {
         let member2 = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         let recipient_key = StorageKeyBuilder::payout_recipient(group_id, 0);
         env.storage().persistent().set(&recipient_key, &creator);
@@ -10163,9 +10183,9 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         env.storage()
             .persistent()
@@ -10294,8 +10314,8 @@ mod tests {
         let member = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Set group to active status
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -10405,8 +10425,8 @@ mod tests {
         let member = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &3);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Set group to active status
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -10450,8 +10470,8 @@ mod tests {
             .persistent()
             .set(&StorageKeyBuilder::group_data(group_id), &group);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Set group to active status
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -10485,8 +10505,8 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Set group to active status
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -10523,8 +10543,8 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Set group to active status
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -10566,8 +10586,8 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member, &None);
 
         // Set group to active status
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -10627,7 +10647,7 @@ mod tests {
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
         // Add one member
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Get members
         let members = client.get_group_members(&group_id, &0, &10);
@@ -10651,10 +10671,10 @@ mod tests {
         let group_id = client.create_group(&creator, &100, &3600, &5);
 
         // Add members in specific order
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
-        client.join_group(&group_id, &member3);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
+        client.join_group(&group_id, &member3, &None);
 
         // Get all members
         let members = client.get_group_members(&group_id, &0, &10);
@@ -10680,14 +10700,14 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Add 5 members
         let mut all_members = Vec::new(&env);
         for i in 0..5 {
             let member = Address::generate(&env);
             all_members.push_back(member.clone());
-            client.join_group(&group_id, &member);
+            client.join_group(&group_id, &member, &None);
         }
 
         // Get first 3 members
@@ -10718,7 +10738,7 @@ mod tests {
         for i in 0..5 {
             let member = Address::generate(&env);
             all_members.push_back(member.clone());
-            client.join_group(&group_id, &member);
+            client.join_group(&group_id, &member, &None);
         }
 
         // Get second page (offset 3, limit 2)
@@ -10741,7 +10761,7 @@ mod tests {
         // Add 3 members
         for i in 0..3 {
             let member = Address::generate(&env);
-            client.join_group(&group_id, &member);
+            client.join_group(&group_id, &member, &None);
         }
 
         // Try to get members beyond total count
@@ -10764,7 +10784,7 @@ mod tests {
         for i in 0..5 {
             let member = Address::generate(&env);
             all_members.push_back(member.clone());
-            client.join_group(&group_id, &member);
+            client.join_group(&group_id, &member, &None);
         }
 
         // Request 10 members starting from offset 3 (only 2 available)
@@ -10790,7 +10810,7 @@ mod tests {
         // Add 5 members
         for i in 0..5 {
             let member = Address::generate(&env);
-            client.join_group(&group_id, &member);
+            client.join_group(&group_id, &member, &None);
         }
 
         // Request with limit > 100 (should be capped)
@@ -10825,7 +10845,7 @@ mod tests {
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
         // Add members
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Request with limit 0
         let members = client.get_group_members(&group_id, &0, &0);
@@ -10870,9 +10890,9 @@ mod tests {
         let creator = Address::generate(&env);
         let group_id = client.create_group(&creator, &100, &3600, &5);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &Address::generate(&env));
-        client.join_group(&group_id, &Address::generate(&env));
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &Address::generate(&env, &None));
+        client.join_group(&group_id, &Address::generate(&env, &None));
 
         let count = client.get_group_total_members(&group_id);
         assert_eq!(count, 3);
@@ -10902,7 +10922,7 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Create a payout record
         let payout = PayoutRecord::new(creator.clone(), group_id, 0, 300, 1234567890);
@@ -10932,7 +10952,7 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Try to get a payout that doesn't exist
         client.get_payout(&group_id, &0);
@@ -10965,9 +10985,9 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         // Create payout records for multiple cycles
         let payout0 = PayoutRecord::new(creator.clone(), group_id, 0, 300, 1234567890);
@@ -11008,8 +11028,8 @@ mod tests {
         let group_id1 = client.create_group(&creator1, &100, &3600, &3);
         let group_id2 = client.create_group(&creator2, &200, &7200, &5);
 
-        client.join_group(&group_id1, &creator1);
-        client.join_group(&group_id2, &creator2);
+        client.join_group(&group_id1, &creator1, &None);
+        client.join_group(&group_id2, &creator2, &None);
 
         // Create payout records for different groups
         let payout1 = PayoutRecord::new(creator1.clone(), group_id1, 0, 300, 1234567890);
@@ -11042,7 +11062,7 @@ mod tests {
         // Create group with maximum contribution amount to test overflow
         let group_id = client.create_group(&creator, &i128::MAX, &3600, &3);
 
-        client.join_group(&group_id, &creator);
+        client.join_group(&group_id, &creator, &None);
 
         // Set group to active status with many members to trigger overflow
         let group_key = StorageKeyBuilder::group_data(group_id);
@@ -11931,9 +11951,9 @@ mod tests {
             .address();
         let group_id = client.create_group(&creator, &100, &3600, &3, &token_address);
 
-        client.join_group(&group_id, &creator);
-        client.join_group(&group_id, &member1);
-        client.join_group(&group_id, &member2);
+        client.join_group(&group_id, &creator, &None);
+        client.join_group(&group_id, &member1, &None);
+        client.join_group(&group_id, &member2, &None);
 
         env.mock_all_auths();
         env.ledger().set_timestamp(started_at);
@@ -11984,8 +12004,8 @@ mod tests {
         let group_id1 = client.create_group(&creator1, &100, &3600, &3, &token_address);
         let group_id2 = client.create_group(&creator2, &200, &7200, &5, &token_address);
 
-        client.join_group(&group_id1, &creator1);
-        client.join_group(&group_id2, &creator2);
+        client.join_group(&group_id1, &creator1, &None);
+        client.join_group(&group_id2, &creator2, &None);
 
         let group_id = client
             .create_group(&creator, &10_000_000, &cycle_duration, &5, &grace)
@@ -12774,3 +12794,143 @@ mod tests {
         let token_address = Address::generate(&env);
         client.create_group(&creator, &10000, &3600, &5, &token_address);
     }
+
+    // =========================================================================
+    // Referral tracking tests (issue #760)
+    // =========================================================================
+
+    #[test]
+    fn test_join_group_with_referrer_stores_mapping() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let invitee = Address::generate(&env);
+        let referrer = Address::generate(&env);
+        let group_id = 1u64;
+
+        let mut group = Group::new(group_id, creator.clone(), 100, 3600, 5, 2, 1000, 0);
+        group.member_count = 1;
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(group_id), &group);
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_status(group_id),
+            &GroupStatus::Pending,
+        );
+        let mut members = Vec::new(&env);
+        members.push_back(creator.clone());
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_members(group_id), &members);
+
+        env.mock_all_auths();
+        client.join_group(&group_id, &invitee, &Some(referrer.clone()));
+
+        // Referral mapping must be stored
+        let referral_key = StorageKeyBuilder::member_referral(group_id, invitee.clone());
+        let stored: Address = env.storage().persistent().get(&referral_key).unwrap();
+        assert_eq!(stored, referrer);
+    }
+
+    #[test]
+    fn test_join_group_without_referrer_no_mapping() {
+        let env = Env::default();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let invitee = Address::generate(&env);
+        let group_id = 1u64;
+
+        let mut group = Group::new(group_id, creator.clone(), 100, 3600, 5, 2, 1000, 0);
+        group.member_count = 1;
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(group_id), &group);
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_status(group_id),
+            &GroupStatus::Pending,
+        );
+        let mut members = Vec::new(&env);
+        members.push_back(creator.clone());
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_members(group_id), &members);
+
+        env.mock_all_auths();
+        client.join_group(&group_id, &invitee, &None);
+
+        // No referral mapping should exist
+        let referral_key = StorageKeyBuilder::member_referral(group_id, invitee.clone());
+        assert!(!env.storage().persistent().has(&referral_key));
+    }
+
+    #[test]
+    fn test_join_group_with_referrer_emits_member_referred_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let invitee = Address::generate(&env);
+        let referrer = Address::generate(&env);
+        let group_id = 1u64;
+
+        let mut group = Group::new(group_id, creator.clone(), 100, 3600, 5, 2, 1000, 0);
+        group.member_count = 1;
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(group_id), &group);
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_status(group_id),
+            &GroupStatus::Pending,
+        );
+        let mut members = Vec::new(&env);
+        members.push_back(creator.clone());
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_members(group_id), &members);
+
+        client.join_group(&group_id, &invitee, &Some(referrer.clone()));
+
+        // Expect two events: member_referred + member_joined
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn test_join_group_without_referrer_no_referral_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(StellarSaveContract, ());
+        let client = StellarSaveContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let invitee = Address::generate(&env);
+        let group_id = 1u64;
+
+        let mut group = Group::new(group_id, creator.clone(), 100, 3600, 5, 2, 1000, 0);
+        group.member_count = 1;
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(group_id), &group);
+        env.storage().persistent().set(
+            &StorageKeyBuilder::group_status(group_id),
+            &GroupStatus::Pending,
+        );
+        let mut members = Vec::new(&env);
+        members.push_back(creator.clone());
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_members(group_id), &members);
+
+        client.join_group(&group_id, &invitee, &None);
+
+        // Only member_joined event — no member_referred
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+    }
+}
