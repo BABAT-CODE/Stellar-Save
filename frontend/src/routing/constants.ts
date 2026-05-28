@@ -8,6 +8,7 @@ export const ROUTES = {
   GROUPS: "/groups",
   GROUP_DETAIL: "/groups/:groupId",
   PROFILE: "/profile",
+  PROFILE_DETAIL: "/profile/:address",
   SETTINGS: "/settings",
   NOT_FOUND: "/404",
   ERROR: "/500",

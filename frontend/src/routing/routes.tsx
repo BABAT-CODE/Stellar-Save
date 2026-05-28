@@ -109,6 +109,12 @@ export const routeConfig: RouteConfig[] = [
     title: "Profile - Stellar Save",
   },
   {
+    path: ROUTES.PROFILE_DETAIL,
+    component: ProfilePage,
+    protected: true,
+    title: "Profile - Stellar Save",
+  },
+  {
     path: ROUTES.SETTINGS,
     component: SettingsPage,
     protected: true,
