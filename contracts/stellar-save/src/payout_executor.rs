@@ -773,6 +773,15 @@ pub fn execute_payout(env: Env, group_id: u64) -> Result<(), StellarSaveError> {
         .get(&group_key)
         .ok_or(StellarSaveError::GroupNotFound)?;
 
+    // Reentrancy protection - reject if a payout is already in progress for this group
+    if group.payout_in_progress {
+        return Err(StellarSaveError::ReentrancyDetected);
+    }
+
+    // Set per-group reentrancy guard
+    group.payout_in_progress = true;
+    env.storage().persistent().set(&group_key, &group);
+
     // Step 2: Validate group status is Active
     // Only Active groups can process payouts
     if group.paused {
@@ -864,9 +873,9 @@ pub fn execute_payout(env: Env, group_id: u64) -> Result<(), StellarSaveError> {
     // Step 13: Advance to the next cycle or mark group as complete
     advance_cycle_or_complete(&env, &mut group)?;
 
-    // Clear reentrancy protection flag
-    let reentrancy_key = StorageKeyBuilder::reentrancy_guard();
-    env.storage().persistent().set(&reentrancy_key, &0);
+    // Clear per-group reentrancy guard
+    group.payout_in_progress = false;
+    env.storage().persistent().set(&group_key, &group);
 
     // Payout execution completed successfully
     Ok(())
@@ -1847,5 +1856,24 @@ mod tests {
         let penalty_key = StorageKeyBuilder::member_penalty_total(group_id, member.clone());
         let total: i128 = env.storage().persistent().get(&penalty_key).unwrap_or(0);
         assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_execute_payout_reentrancy_detected() {
+        let env = Env::default();
+        let group_id = 1u64;
+
+        // Create a minimal group with payout_in_progress = true
+        let creator = Address::generate(&env);
+        let mut group = Group::new_with_penalty(
+            group_id, creator, 1_000_000, 3600, 2, 2, 0, 0, false, 0,
+        );
+        group.payout_in_progress = true;
+        env.storage()
+            .persistent()
+            .set(&StorageKeyBuilder::group_data(group_id), &group);
+
+        let result = execute_payout(env, group_id);
+        assert_eq!(result, Err(StellarSaveError::ReentrancyDetected));
     }
 }

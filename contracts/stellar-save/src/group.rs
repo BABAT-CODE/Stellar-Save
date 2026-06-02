@@ -285,6 +285,10 @@ pub struct Group {
     /// Defaults to `PayoutOrder::Sequential` (join-order rotation).
     /// See [`crate::payout::PayoutOrder`] for available strategies.
     pub payout_order: crate::payout::PayoutOrder,
+
+    /// Reentrancy guard: true while a payout is being executed for this group.
+    /// Prevents concurrent or recursive calls to execute_payout.
+    pub payout_in_progress: bool,
 }
 impl Group {
     /// Creates a new Group with validation.
@@ -412,6 +416,7 @@ impl Group {
             image_url: None,
             archived: false,
             payout_order: crate::payout::PayoutOrder::Sequential,
+            payout_in_progress: false,
         }
     }
     /// Checks if the group has completed all cycles.
