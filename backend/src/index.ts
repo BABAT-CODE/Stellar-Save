@@ -34,6 +34,7 @@ import { FeedbackService } from './feedback_service';
 import { createV2Router } from './routes/v2';
 import { metricsMiddleware, metricsHandler } from './metrics';
 import { requestLogger } from './logger';
+import { disconnectPrisma } from './prisma_client';
 import { createRateLimiterMiddleware, createAuthRateLimiterMiddleware } from './rate_limiter';
 import { createTieredRateLimiter, configureTier, setEndpointCost } from './redis_rate_limiter';
 import { createQuotaReporterRouter } from './routes/quota_reporter';
@@ -213,40 +214,38 @@ const adminService = new AdminService();
 const webPushService = new WebPushService();
 
 const eventIndexer = new ContractEventIndexer(
-  process.env.HORIZON_URL || 'https://horizon-testnet.stellar.org',
-  process.env.CONTRACT_ID || 'CA...', // Placeholder contract ID
-  process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/stellar_save',
+  config.indexer.horizonUrl,
+  config.indexer.contractId,
+  config.database.url,
   webPushService
 );
 
-if (process.env.BACKUP_ENABLED === 'true') {
+if (config.backup.enabled) {
   backupScheduler.start();
   backupMonitor.start();
 }
 
 // Start the contract event indexer
-if (process.env.INDEXER_ENABLED === 'true') {
+if (config.indexer.enabled) {
   eventIndexer.start().catch(console.error);
 }
 
 // Start on-chain anomaly monitor
-if (process.env.ON_CHAIN_MONITOR_ENABLED === 'true') {
+if (config.onChainMonitor.enabled) {
   const onChainMonitor = new OnChainMonitor({
-    largePayoutThresholdStroops: BigInt(
-      process.env.ON_CHAIN_LARGE_PAYOUT_THRESHOLD_STROOPS ?? '100000000000'
-    ),
+    largePayoutThresholdStroops: config.onChainMonitor.largePayoutThresholdStroops,
   });
   onChainMonitor.start();
 }
 
 // Start analytics resync job if enabled
-if (process.env.ANALYTICS_RESYNC_ENABLED === 'true') {
-  startAnalyticsResyncJob(process.env.ANALYTICS_RESYNC_SCHEDULE || '0 * * * *'); // default: top of every hour
+if (config.analyticsResync.enabled) {
+  startAnalyticsResyncJob(config.analyticsResync.schedule);
 }
 
 // Start keeper/relayer for automated payout execution (Issue #1026)
 if (config.keeper.enabled) {
-  startKeeperJob(config.keeper.schedule, process.env.CONTRACT_ID || '', config.stellar.rpcUrl);
+  startKeeperJob(config.keeper.schedule, config.indexer.contractId, config.stellar.rpcUrl);
 }
 
 const services = { engine, abTest, exportService, backupService, backupScheduler, recoveryService, backupMonitor, eventIndexer };
@@ -310,12 +309,12 @@ app.use('/api/admin/audit-log', createAuditRouter());
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);
 
-const hasTls = Boolean(process.env.TLS_KEY_PATH && process.env.TLS_CERT_PATH);
+const hasTls = Boolean(config.tls.keyPath && config.tls.certPath);
 const server = hasTls
   ? http2.createSecureServer(
       {
-        key: fs.readFileSync(process.env.TLS_KEY_PATH as string),
-        cert: fs.readFileSync(process.env.TLS_CERT_PATH as string),
+        key: fs.readFileSync(config.tls.keyPath as string),
+        cert: fs.readFileSync(config.tls.certPath as string),
         allowHTTP1: true,
       },
       app
@@ -330,7 +329,7 @@ server.listen(PORT, async () => {
   console.log(`  Cache stats: http://localhost:${PORT}/api/cache/stats`);
 
   // Start fraud detection worker (Issue #1028)
-  if (process.env.FRAUD_DETECTION_ENABLED !== 'false') {
+  if (config.fraud.enabled) {
     await fraudDetectionWorker.start();
   }
 
@@ -383,6 +382,7 @@ server.listen(PORT, async () => {
 process.on('SIGTERM', () => {
   fraudDetectionWorker.stop();
   server.close();
+  disconnectPrisma().catch(() => {});
 });
 
 export { app }; 
