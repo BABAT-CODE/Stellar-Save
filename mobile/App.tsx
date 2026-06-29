@@ -15,11 +15,9 @@ const queryClient = new QueryClient({
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthGate>
-        <StatusBar style="light" />
-        <RootNavigator />
-      </AuthGate>
-    </QueryClientProvider>
+    <AuthGate>
+      <StatusBar style="light" />
+      <RootNavigator />
+    </AuthGate>
   );
 }
