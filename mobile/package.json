@@ -1,0 +1,19 @@
+{
+  "name": "stellar-save-mobile-e2e",
+  "version": "1.0.0",
+  "description": "Maestro E2E test suite for Stellar Save mobile app",
+  "private": true,
+  "scripts": {
+    "test": "bash scripts/run-tests.sh",
+    "test:smoke": "maestro test .maestro/smoke.yaml",
+    "test:onboarding": "maestro test .maestro/onboarding.yaml",
+    "test:wallet": "maestro test .maestro/wallet_creation.yaml",
+    "test:create-group": "maestro test .maestro/create_group.yaml",
+    "test:join-group": "maestro test .maestro/join_group.yaml",
+    "test:contribute": "maestro test .maestro/contribute.yaml",
+    "test:quarantine-report": "bash scripts/quarantine-report.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
