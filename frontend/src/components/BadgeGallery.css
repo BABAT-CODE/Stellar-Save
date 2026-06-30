@@ -1,0 +1,100 @@
+/* BadgeGallery component styles */
+
+.badge-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .badge-gallery-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .badge-gallery-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Individual badge card */
+.badge-card {
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: default;
+  border-radius: 12px !important;
+}
+
+.badge-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Badge artwork emoji container */
+.badge-artwork {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  font-size: 1.75rem;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+/* Share button positioned at top-right of card */
+.badge-share-btn {
+  position: absolute !important;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.badge-card:hover .badge-share-btn,
+.badge-card:focus-within .badge-share-btn {
+  opacity: 1;
+}
+
+/* Empty state */
+.badge-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 2px dashed rgba(0, 0, 0, 0.1);
+}
+
+.badge-empty-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+/* Badge type chip */
+.badge-type-chip {
+  font-size: 0.68rem !important;
+  height: 20px !important;
+}
+
+/* Entrance animation for badge cards */
+@keyframes badgeFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.badge-card-animated {
+  animation: badgeFadeIn 0.25s ease forwards;
+}
