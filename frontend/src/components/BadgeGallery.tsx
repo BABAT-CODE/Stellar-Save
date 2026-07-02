@@ -1,182 +1,182 @@
+import React, { useCallback } from 'react';
+import type { MemberBadge } from '../hooks/useMemberBadges';
 import './BadgeGallery.css';
-import {
-  Box,
-  Card,
-  CardContent,
-  Chip,
-  IconButton,
-  Stack,
-  Tooltip,
-  Typography,
-} from '@mui/material';
-import ShareIcon from '@mui/icons-material/Share';
-import type { MemberBadge, BadgeType } from '../hooks/useMemberBadges';
 
-// ── Badge visual config ────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const BADGE_COLORS: Record<BadgeType, string> = {
-  FirstContribution: '#FFD700',
-  CycleMaster: '#4CAF50',
-  GroupFounder: '#2196F3',
-  LoyalMember: '#9C27B0',
-  PayoutReceived: '#FF5722',
-  StreakKeeper: '#00BCD4',
-};
-
-const BADGE_EMOJIS: Record<BadgeType, string> = {
-  FirstContribution: '🌟',
-  CycleMaster: '🏆',
-  GroupFounder: '👑',
-  LoyalMember: '💎',
-  PayoutReceived: '💰',
-  StreakKeeper: '🔥',
-};
-
-// ── Props ──────────────────────────────────────────────────────────────────────
-
-export interface BadgeGalleryProps {
-  /** Array of badges to display. Pass an empty array to show the empty state. */
+interface BadgeGalleryProps {
+  /** Ordered list of earned badges to display */
   badges: MemberBadge[];
-  /** Called when the user clicks the share icon on a badge. */
-  onShare?: (badge: MemberBadge) => void;
+  /** Loading state — shows skeleton cards when true */
+  isLoading?: boolean;
+  /** Error message to display instead of the grid */
+  error?: string | null;
+  /** Wallet address owning these badges (used for share URL) */
+  walletAddress?: string;
+  /** Optional section title override */
+  title?: string;
 }
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function BadgeCard({
-  badge,
-  onShare,
-  index,
-}: {
-  badge: MemberBadge;
-  onShare?: (badge: MemberBadge) => void;
-  index: number;
-}) {
-  const color = BADGE_COLORS[badge.type];
-  const emoji = BADGE_EMOJIS[badge.type];
-  const formattedDate = badge.earnedDate.toLocaleDateString('en-US', {
-    month: 'long',
+function formatEarnedDate(ts: number): string {
+  return new Date(ts).toLocaleDateString('en-US', {
     year: 'numeric',
+    month: 'short',
+    day: 'numeric',
   });
+}
 
+function buildShareText(badge: MemberBadge, walletAddress?: string): string {
+  const base = `I earned the "${badge.name}" badge on Stellar Save! ${badge.artwork}`;
+  if (walletAddress) {
+    return `${base}\nhttps://stellar-save.app/members/${walletAddress}`;
+  }
+  return base;
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+
+function BadgeSkeletons({ count = 6 }: { count?: number }) {
   return (
-    <Card
-      className="badge-card badge-card-animated"
-      elevation={0}
-      sx={{
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 3,
-        animationDelay: `${index * 60}ms`,
-      }}
-      role="article"
-      aria-label={`${badge.title} badge, earned ${formattedDate}`}
-    >
-      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 }, position: 'relative' }}>
-        {/* Share button */}
-        {onShare && (
-          <Tooltip title={`Share ${badge.title} badge`} placement="top">
-            <IconButton
-              className="badge-share-btn"
-              size="small"
-              onClick={() => onShare(badge)}
-              aria-label={`Share ${badge.title} badge`}
-              sx={{ color: 'text.secondary' }}
-            >
-              <ShareIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        )}
-
-        <Stack spacing={1}>
-          {/* Artwork */}
-          <Box
-            className="badge-artwork"
-            sx={{ bgcolor: `${color}22` }}
-            role="img"
-            aria-label={`${badge.type} badge icon`}
-          >
-            <span aria-hidden="true">{emoji}</span>
-          </Box>
-
-          {/* Title */}
-          <Typography variant="subtitle2" fontWeight="bold" sx={{ lineHeight: 1.3 }}>
-            {badge.title}
-          </Typography>
-
-          {/* Description */}
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ lineHeight: 1.4, display: 'block' }}
-          >
-            {badge.description}
-          </Typography>
-
-          {/* Footer row: type chip + date */}
-          <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={0.5}>
-            <Chip
-              label={badge.type.replace(/([A-Z])/g, ' $1').trim()}
-              size="small"
-              className="badge-type-chip"
-              sx={{
-                bgcolor: `${color}22`,
-                color,
-                fontWeight: 600,
-                border: `1px solid ${color}44`,
-              }}
-            />
-            <Typography variant="caption" color="text.secondary" aria-label={`Earned ${formattedDate}`}>
-              {formattedDate}
-            </Typography>
-          </Stack>
-        </Stack>
-      </CardContent>
-    </Card>
+    <div className="badge-gallery__loading" aria-busy="true" aria-label="Loading badges…">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="badge-gallery__skeleton" role="presentation" />
+      ))}
+    </div>
   );
 }
 
-function EmptyState() {
+// ── Empty state ────────────────────────────────────────────────────────────────
+
+function BadgeGalleryEmpty() {
   return (
-    <Box
-      className="badge-empty-state"
+    <div
+      className="badge-gallery__empty"
       role="status"
       aria-label="No badges earned yet"
     >
-      <Box className="badge-empty-icon" aria-hidden="true">🏅</Box>
-      <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-        No badges yet
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 320 }}>
-        Earn badges by completing contribution cycles and reaching milestones in your savings groups.
-      </Typography>
-    </Box>
+      <span className="badge-gallery__empty-icon" aria-hidden="true">🎖️</span>
+      <p className="badge-gallery__empty-title">No badges yet</p>
+      <p className="badge-gallery__empty-body">
+        Contribute consistently, complete cycles, and earn payouts to unlock
+        soulbound badges on-chain.
+      </p>
+    </div>
+  );
+}
+
+// ── Individual badge card ─────────────────────────────────────────────────────
+
+interface BadgeCardProps {
+  badge: MemberBadge;
+  walletAddress?: string;
+}
+
+function BadgeCard({ badge, walletAddress }: BadgeCardProps) {
+  const handleShare = useCallback(() => {
+    const text = buildShareText(badge, walletAddress);
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      // Native share sheet (mobile / Safari 15+)
+      navigator.share({ text }).catch(() => {
+        // User cancelled — not an error
+      });
+    } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => undefined);
+    }
+  }, [badge, walletAddress]);
+
+  return (
+    <li
+      className="badge-gallery__card"
+      tabIndex={0}
+      aria-label={`Badge: ${badge.name}. Earned ${formatEarnedDate(badge.earnedAt)}. ${badge.description}`}
+      role="listitem"
+    >
+      <button
+        className="badge-gallery__share"
+        onClick={handleShare}
+        aria-label={`Share ${badge.name} badge`}
+        type="button"
+      >
+        Share
+      </button>
+
+      <span
+        className="badge-gallery__artwork"
+        aria-hidden="true"
+        role="img"
+      >
+        {badge.artwork}
+      </span>
+
+      <p className="badge-gallery__name">{badge.name}</p>
+
+      <time
+        className="badge-gallery__date"
+        dateTime={new Date(badge.earnedAt).toISOString()}
+        aria-label={`Earned on ${formatEarnedDate(badge.earnedAt)}`}
+      >
+        {formatEarnedDate(badge.earnedAt)}
+      </time>
+    </li>
   );
 }
 
 // ── BadgeGallery ──────────────────────────────────────────────────────────────
 
 /**
- * Displays a responsive grid of soulbound membership/completion badges.
- * Shows an empty state when the member has not yet earned any badges.
+ * BadgeGallery
+ *
+ * Displays a responsive grid of soulbound on-chain badges earned by a member.
+ * Shows skeleton cards while loading, an empty state when the wallet has no
+ * badges, and a share affordance on each individual badge card.
+ *
+ * @example
+ * ```tsx
+ * const { badges, isLoading, error } = useMemberBadges(address);
+ * <BadgeGallery badges={badges} isLoading={isLoading} error={error} walletAddress={address} />
+ * ```
  */
-export function BadgeGallery({ badges, onShare }: BadgeGalleryProps) {
-  if (badges.length === 0) {
-    return <EmptyState />;
-  }
-
+export function BadgeGallery({
+  badges,
+  isLoading = false,
+  error = null,
+  walletAddress,
+  title = 'Soulbound Badges',
+}: BadgeGalleryProps) {
   return (
-    <Box
-      className="badge-gallery-grid"
-      role="list"
-      aria-label={`${badges.length} earned badge${badges.length !== 1 ? 's' : ''}`}
-    >
-      {badges.map((badge, index) => (
-        <Box key={badge.id} role="listitem">
-          <BadgeCard badge={badge} onShare={onShare} index={index} />
-        </Box>
-      ))}
-    </Box>
+    <section className="badge-gallery" aria-labelledby="badge-gallery-heading">
+      <div className="badge-gallery__header">
+        <h3 id="badge-gallery-heading" style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700 }}>
+          {title}
+        </h3>
+        {!isLoading && !error && badges.length > 0 && (
+          <span className="badge-gallery__count" aria-live="polite">
+            {badges.length} badge{badges.length !== 1 ? 's' : ''} earned
+          </span>
+        )}
+      </div>
+
+      {isLoading && <BadgeSkeletons count={6} />}
+
+      {!isLoading && error && (
+        <p role="alert" style={{ color: '#d32f2f', fontSize: '0.85rem', margin: 0 }}>
+          {error}
+        </p>
+      )}
+
+      {!isLoading && !error && badges.length === 0 && <BadgeGalleryEmpty />}
+
+      {!isLoading && !error && badges.length > 0 && (
+        <ol className="badge-gallery__grid" aria-label={`${badges.length} earned badges`}>
+          {badges.map((badge) => (
+            <BadgeCard key={badge.id} badge={badge} walletAddress={walletAddress} />
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }
 

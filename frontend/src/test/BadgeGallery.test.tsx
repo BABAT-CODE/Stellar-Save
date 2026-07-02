@@ -1,109 +1,108 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import { BadgeGallery } from '../components/BadgeGallery';
 import type { MemberBadge } from '../hooks/useMemberBadges';
 
-const mockBadges: MemberBadge[] = [
-  {
-    id: 'addr-FirstContribution',
-    type: 'FirstContribution',
-    title: 'First Contribution',
-    description: 'Made your very first contribution to a savings group.',
-    earnedDate: new Date('2025-01-15'),
-    artworkUrl: '',
-  },
-  {
-    id: 'addr-CycleMaster',
-    type: 'CycleMaster',
-    title: 'Cycle Master',
-    description: 'Completed all contributions across a full cycle.',
-    earnedDate: new Date('2025-04-01'),
-    artworkUrl: '',
-  },
-];
-
 describe('BadgeGallery', () => {
-  it('renders badge cards for each badge provided', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    expect(screen.getByText('First Contribution')).toBeInTheDocument();
-    expect(screen.getByText('Cycle Master')).toBeInTheDocument();
+  const mockBadges: MemberBadge[] = [
+    {
+      id: 'badge-1',
+      type: 'founder',
+      name: 'Founder',
+      description: 'Created one of the first savings groups.',
+      artwork: '🏛️',
+      earnedAt: Date.now() - 7 * 24 * 60 * 60 * 1000, // 1 week ago
+    },
+    {
+      id: 'badge-2',
+      type: 'streak_5',
+      name: '5-Cycle Streak',
+      description: 'Contributed for 5 consecutive cycles.',
+      artwork: '🔥',
+      earnedAt: Date.now() - 14 * 24 * 60 * 60 * 1000, // 2 weeks ago
+    },
+  ];
+
+  it('renders loading skeletons when isLoading is true', () => {
+    render(<BadgeGallery badges={[]} isLoading={true} />);
+    
+    const loading = screen.getByLabelText(/loading badges/i);
+    expect(loading).toBeInTheDocument();
+    expect(loading.children.length).toBeGreaterThan(0);
   });
 
-  it('shows the empty state when badges array is empty', () => {
-    render(<BadgeGallery badges={[]} />);
-    expect(screen.getByText('No badges yet')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Earn badges by completing contribution cycles/i),
-    ).toBeInTheDocument();
+  it('renders empty state when badges array is empty', () => {
+    render(<BadgeGallery badges={[]} isLoading={false} />);
+    
+    expect(screen.getByRole('status', { name: /no badges earned yet/i })).toBeInTheDocument();
+    expect(screen.getByText(/no badges yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/contribute consistently/i)).toBeInTheDocument();
   });
 
-  it('does not render badge cards when empty', () => {
-    render(<BadgeGallery badges={[]} />);
-    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  it('renders error message when error prop is provided', () => {
+    const errorMsg = 'Failed to load badges.';
+    render(<BadgeGallery badges={[]} isLoading={false} error={errorMsg} />);
+    
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(errorMsg);
   });
 
-  it('renders the correct number of badge articles', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    const cards = screen.getAllByRole('article');
-    expect(cards).toHaveLength(mockBadges.length);
+  it('renders all provided badges in a grid', () => {
+    render(<BadgeGallery badges={mockBadges} isLoading={false} />);
+    
+    expect(screen.getByText('Founder')).toBeInTheDocument();
+    expect(screen.getByText('5-Cycle Streak')).toBeInTheDocument();
+    expect(screen.getByText('🏛️')).toBeInTheDocument();
+    expect(screen.getByText('🔥')).toBeInTheDocument();
   });
 
-  it('calls onShare with the correct badge when share button is clicked', () => {
-    const onShare = vi.fn();
-    render(<BadgeGallery badges={mockBadges} onShare={onShare} />);
-
-    const shareButtons = screen.getAllByRole('button', { name: /Share/i });
-    fireEvent.click(shareButtons[0]);
-
-    expect(onShare).toHaveBeenCalledTimes(1);
-    expect(onShare).toHaveBeenCalledWith(mockBadges[0]);
+  it('displays badge count when badges are present', () => {
+    render(<BadgeGallery badges={mockBadges} isLoading={false} />);
+    
+    expect(screen.getByText(/2 badges earned/i)).toBeInTheDocument();
   });
 
-  it('calls onShare with the second badge when its share button is clicked', () => {
-    const onShare = vi.fn();
-    render(<BadgeGallery badges={mockBadges} onShare={onShare} />);
-
-    const shareButtons = screen.getAllByRole('button', { name: /Share/i });
-    fireEvent.click(shareButtons[1]);
-
-    expect(onShare).toHaveBeenCalledWith(mockBadges[1]);
+  it('renders share button on each badge card', () => {
+    render(<BadgeGallery badges={mockBadges} isLoading={false} walletAddress="GABCD..." />);
+    
+    const shareButtons = screen.getAllByRole('button', { name: /share .* badge/i });
+    expect(shareButtons.length).toBe(mockBadges.length);
   });
 
-  it('renders badge descriptions', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    expect(
-      screen.getByText('Made your very first contribution to a savings group.'),
-    ).toBeInTheDocument();
+  it('renders earned dates with proper datetime attribute', () => {
+    render(<BadgeGallery badges={mockBadges} isLoading={false} />);
+    
+    const times = screen.getAllByRole('time');
+    expect(times.length).toBe(mockBadges.length);
+    times.forEach((time, idx) => {
+      expect(time).toHaveAttribute('datetime');
+      expect(time.getAttribute('datetime')).toContain('T'); // ISO format check
+    });
   });
 
-  it('has correct accessible role on the gallery list', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    expect(screen.getByRole('list')).toBeInTheDocument();
+  it('respects custom title prop', () => {
+    const customTitle = 'My Achievements';
+    render(<BadgeGallery badges={[]} isLoading={false} title={customTitle} />);
+    
+    expect(screen.getByText(customTitle)).toBeInTheDocument();
   });
 
-  it('each badge item is wrapped in a listitem role', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    const items = screen.getAllByRole('listitem');
-    expect(items).toHaveLength(mockBadges.length);
+  it('renders badges with correct accessibility roles', () => {
+    render(<BadgeGallery badges={mockBadges} isLoading={false} />);
+    
+    const list = screen.getByRole('list', { name: /2 earned badges/i });
+    expect(list).toBeInTheDocument();
+
+    const listItems = screen.getAllByRole('listitem');
+    expect(listItems.length).toBe(mockBadges.length);
   });
 
-  it('shows "No badges yet" status role for screen readers when empty', () => {
-    render(<BadgeGallery badges={[]} />);
-    expect(screen.getByRole('status')).toBeInTheDocument();
-  });
-
-  it('renders badge icon regions with role=img', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    const imgRoles = screen.getAllByRole('img');
-    // Each badge gets one icon img
-    expect(imgRoles.length).toBeGreaterThanOrEqual(mockBadges.length);
-  });
-
-  it('renders earned date for each badge', () => {
-    render(<BadgeGallery badges={mockBadges} />);
-    // First badge earned Jan 2025
-    expect(screen.getByText(/January 2025/i)).toBeInTheDocument();
-    // Second badge earned Apr 2025
-    expect(screen.getByText(/April 2025/i)).toBeInTheDocument();
+  it('badge cards are keyboard accessible', () => {
+    render(<BadgeGallery badges={mockBadges} isLoading={false} />);
+    
+    const cards = screen.getAllByRole('listitem');
+    cards.forEach((card) => {
+      expect(card).toHaveAttribute('tabIndex', '0');
+    });
   });
 });

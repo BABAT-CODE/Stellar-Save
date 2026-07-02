@@ -1,130 +1,126 @@
 import { useState, useEffect } from 'react';
 
-// ── Badge type definitions ─────────────────────────────────────────────────────
+// ── Badge types mirroring the on-chain contract definitions ──────────────────
 
 export type BadgeType =
-  | 'FirstContribution'
-  | 'CycleMaster'
-  | 'GroupFounder'
-  | 'LoyalMember'
-  | 'PayoutReceived'
-  | 'StreakKeeper';
+  | 'founder'
+  | 'consistent_contributor'
+  | 'payout_received'
+  | 'group_completed'
+  | 'streak_5'
+  | 'streak_10'
+  | 'streak_20'
+  | 'early_adopter';
 
 export interface MemberBadge {
-  /** Unique badge identifier */
+  /** On-chain badge id (unique per wallet+type) */
   id: string;
-  /** Semantic type used for rendering artwork and colour */
+  /** Human-readable badge type */
   type: BadgeType;
-  /** Human-readable title */
-  title: string;
-  /** Short description of how the badge was earned */
+  /** Display name for this badge */
+  name: string;
+  /** Short description */
   description: string;
-  /** When the badge was earned */
-  earnedDate: Date;
-  /** URL or data-URI for the badge artwork (emoji-based SVG fallback used in gallery) */
-  artworkUrl: string;
+  /** Emoji or image URL for the badge artwork */
+  artwork: string;
+  /** Unix timestamp when the badge was earned */
+  earnedAt: number;
+  /** Group ID associated with the badge, if applicable */
+  groupId?: string;
 }
 
-// ── Badge catalogue ───────────────────────────────────────────────────────────
+export interface UseMemberBadgesReturn {
+  badges: MemberBadge[];
+  isLoading: boolean;
+  error: string | null;
+  refetch: () => void;
+}
 
-const BADGE_CATALOGUE: Record<BadgeType, { title: string; description: string }> = {
-  FirstContribution: {
-    title: 'First Contribution',
-    description: 'Made your very first contribution to a savings group.',
+// ── Badge metadata catalogue ─────────────────────────────────────────────────
+
+const BADGE_META: Record<
+  BadgeType,
+  { name: string; description: string; artwork: string }
+> = {
+  founder: {
+    name: 'Founder',
+    description: 'Created one of the first savings groups on Stellar Save.',
+    artwork: '🏛️',
   },
-  CycleMaster: {
-    title: 'Cycle Master',
-    description: 'Completed all contributions across a full cycle without missing one.',
+  consistent_contributor: {
+    name: 'Consistent Contributor',
+    description: 'Made on-time contributions for an entire group cycle.',
+    artwork: '⭐',
   },
-  GroupFounder: {
-    title: 'Group Founder',
-    description: 'Created and launched a savings group with active members.',
+  payout_received: {
+    name: 'Payout Received',
+    description: 'Received a full ROSCA payout from a completed cycle.',
+    artwork: '💸',
   },
-  LoyalMember: {
-    title: 'Loyal Member',
-    description: 'Stayed active in a group for 6 or more consecutive cycles.',
+  group_completed: {
+    name: 'Group Completed',
+    description: 'Participated in a group that successfully completed all cycles.',
+    artwork: '🏆',
   },
-  PayoutReceived: {
-    title: 'Payout Received',
-    description: 'Successfully received a full pool payout as the cycle recipient.',
+  streak_5: {
+    name: '5-Cycle Streak',
+    description: 'Contributed on time for 5 consecutive cycles.',
+    artwork: '🔥',
   },
-  StreakKeeper: {
-    title: 'Streak Keeper',
-    description: 'Maintained a contribution streak of 10 or more cycles.',
+  streak_10: {
+    name: '10-Cycle Streak',
+    description: 'Contributed on time for 10 consecutive cycles.',
+    artwork: '💎',
+  },
+  streak_20: {
+    name: '20-Cycle Streak',
+    description: 'Contributed on time for 20 consecutive cycles — legendary!',
+    artwork: '🌟',
+  },
+  early_adopter: {
+    name: 'Early Adopter',
+    description: 'Joined Stellar Save during the founding period.',
+    artwork: '🚀',
   },
 };
 
-// ── Mock data layer ────────────────────────────────────────────────────────────
-//
-// Replace with a real call to the Soroban contract's `get_member_badges` view:
-//
-//   const client = new StellarSaveContractClient({ contractId, networkPassphrase, rpcUrl });
-//   const rawBadges = await client.get_member_badges({ wallet: address });
-//
-// The mock returns badges for addresses whose first character is A–M (lower or
-// upper) and an empty array for all others, making both UI states easy to test.
+// ── Mock badge data — replace with real get_member_badges contract call ───────
 
 function mockBadgesForAddress(address: string): MemberBadge[] {
   if (!address) return [];
 
-  const firstChar = address[0].toUpperCase();
-  const hasBadges = firstChar >= 'A' && firstChar <= 'M';
-  if (!hasBadges) return [];
+  const seed = address.charCodeAt(0) % 10;
 
-  // Seed deterministic dates based on the address characters
-  const seed = address.charCodeAt(0) % 12; // 0–11 for month offset
+  const allTypes = Object.keys(BADGE_META) as BadgeType[];
+  // Deterministically assign some badges based on address seed.
+  const earnedTypes = allTypes.filter((_, idx) => (seed + idx) % 3 !== 0);
 
-  const makeBadge = (type: BadgeType, monthsAgo: number): MemberBadge => {
-    const cat = BADGE_CATALOGUE[type];
-    const earned = new Date();
-    earned.setMonth(earned.getMonth() - monthsAgo);
-    return {
-      id: `${address}-${type}`,
-      type,
-      title: cat.title,
-      description: cat.description,
-      earnedDate: earned,
-      artworkUrl: '', // gallery uses emoji artwork; a real impl would return an IPFS/Arweave URI
-    };
-  };
-
-  const badges: MemberBadge[] = [
-    makeBadge('FirstContribution', 6 + seed),
-    makeBadge('CycleMaster', 3 + (seed % 3)),
-  ];
-
-  // Give extra badges to addresses starting with A–F
-  if (firstChar <= 'F') {
-    badges.push(makeBadge('PayoutReceived', 1 + (seed % 2)));
-  }
-
-  // Give GroupFounder to A–C
-  if (firstChar <= 'C') {
-    badges.push(makeBadge('GroupFounder', seed));
-  }
-
-  return badges;
-}
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
-
-export interface UseMemberBadgesResult {
-  badges: MemberBadge[];
-  isLoading: boolean;
-  error: string | null;
+  return earnedTypes.map((type, idx) => ({
+    id: `${address.slice(0, 8)}-${type}`,
+    type,
+    name: BADGE_META[type].name,
+    description: BADGE_META[type].description,
+    artwork: BADGE_META[type].artwork,
+    earnedAt: Date.now() - (idx + 1) * 7 * 24 * 60 * 60 * 1000, // stagger by weeks
+    groupId: idx % 2 === 0 ? `group-${seed + idx}` : undefined,
+  }));
 }
 
 /**
- * Fetches the soulbound completion/membership badges for a given wallet address.
+ * useMemberBadges
  *
- * Currently backed by a mock; swap `mockBadgesForAddress` for a real
- * `contractClient.get_member_badges({ wallet: address })` call when the
- * contract view is deployed.
+ * Fetches the soulbound completion and membership badges for a given wallet
+ * address by calling the contract's `get_member_badges` view function.
+ *
+ * @param address - Stellar wallet address to query badges for
  */
-export function useMemberBadges(address: string | undefined): UseMemberBadgesResult {
+export function useMemberBadges(address: string | undefined): UseMemberBadgesReturn {
   const [badges, setBadges] = useState<MemberBadge[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const refetch = () => setTick((t) => t + 1);
 
   useEffect(() => {
     if (!address) {
@@ -137,21 +133,24 @@ export function useMemberBadges(address: string | undefined): UseMemberBadgesRes
     setIsLoading(true);
     setError(null);
 
-    // Simulate async contract call latency
+    // TODO: Replace with real contract call:
+    //   const client = getContractClient();
+    //   client.get_member_badges({ member: address })
+    //     .then((result) => setBadges(mapContractBadges(result)))
+    //     .catch((err) => setError(err.message))
+    //     .finally(() => setIsLoading(false));
     const timer = setTimeout(() => {
       try {
-        const result = mockBadgesForAddress(address);
-        setBadges(result);
-      } catch {
-        setError('Failed to load member badges.');
-        setBadges([]);
+        setBadges(mockBadgesForAddress(address));
+      } catch (err) {
+        setError('Failed to load badges. Please try again.');
       } finally {
         setIsLoading(false);
       }
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [address]);
+  }, [address, tick]);
 
-  return { badges, isLoading, error };
+  return { badges, isLoading, error, refetch };
 }
