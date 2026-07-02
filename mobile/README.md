@@ -1,88 +1,40 @@
-# Stellar Save — Mobile E2E Tests (Maestro)
+# Stellar Save Mobile
 
-Automated end-to-end test suite for the Stellar Save mobile app using [Maestro](https://maestro.mobile.dev/).
+Native iOS/Android app built with Expo (React Native + TypeScript). This is
+the v4.0 native mobile app, distinct from the Capacitor-based web wrapper in
+`frontend/` (see `frontend/MOBILE_README.md`).
 
-## Prerequisites
+## Status
 
-```bash
-# Install Maestro CLI
-curl -Ls "https://get.maestro.mobile.dev" | bash
+Scaffold only (#995). Wallet creation (#996), signing (#997), and onboarding/
+KYC (#998) are tracked as separate follow-up issues and land as their own
+PRs on top of this structure.
 
-# Verify installation
-maestro --version
-```
-
-## Running Tests
+## Local run
 
 ```bash
-# Run all non-quarantined flows
-npm test
-
-# Run the lightweight smoke suite (fastest CI feedback)
-npm run test:smoke
-
-# Run individual flows
-npm run test:onboarding
-npm run test:wallet
-npm run test:create-group
-npm run test:join-group
-npm run test:contribute
+cd mobile
+pnpm install
+pnpm start        # opens Expo Dev Tools
+pnpm ios          # run in iOS simulator (requires Xcode)
+pnpm android      # run in Android emulator (requires Android Studio)
 ```
 
-## Test Flows
+For crash reporting, set `EXPO_PUBLIC_SENTRY_DSN` in the Expo environment.
 
-| Flow | File | Covers |
-|------|------|--------|
-| Onboarding | `onboarding.yaml` | App launch, welcome screen, wallet connect prompt |
-| Wallet Creation | `wallet_creation.yaml` | Create wallet, backup seed phrase, confirm |
-| Create Group | `create_group.yaml` | Fill form, set amount/cycle/members, confirm tx |
-| Join Group | `join_group.yaml` | Browse groups, join, confirm membership |
-| Contribute | `contribute.yaml` | Navigate to group, submit contribution, success |
-| Smoke Suite | `smoke.yaml` | Critical-path abbreviated run of all flows |
-
-## Quarantine Mechanism
-
-Flaky tests can be quarantined to prevent CI failures while they are being fixed.
-
-**Quarantine a test:**
-```bash
-echo ".maestro/flaky_flow.yaml  # see issue #123" \
-  >> mobile/quarantine/quarantined_tests.txt
-```
-
-**View quarantine report:**
-```bash
-npm run test:quarantine-report
-```
-
-See [`quarantine/README.md`](quarantine/README.md) for the full policy.
-
-## CI Integration
-
-The GitHub Actions workflow (`.github/workflows/mobile-e2e.yml`) runs:
-- iOS simulator on `macos-14` (Apple Silicon)
-- Android emulator on `ubuntu-latest`
-
-A broken core flow fails the suite deterministically. Quarantined tests are
-skipped and reported as a warning.
-
-## Directory Structure
+## Project structure
 
 ```
 mobile/
-├── .maestro/
-│   ├── config.yaml          # Global Maestro config
-│   ├── smoke.yaml           # Critical-path smoke suite
-│   ├── onboarding.yaml
-│   ├── wallet_creation.yaml
-│   ├── create_group.yaml
-│   ├── join_group.yaml
-│   └── contribute.yaml
-├── quarantine/
-│   ├── README.md            # Quarantine policy
-│   └── quarantined_tests.txt
-├── scripts/
-│   ├── run-tests.sh         # Quarantine-aware test runner
-│   └── quarantine-report.sh
-└── package.json
+  App.tsx              # app entry
+  src/
+    navigation/         # React Navigation tree
+    screens/             # screen components
+  app.json              # Expo config
 ```
+
+## Conventions
+
+ESLint/Prettier extend the repo-root configs (`eslint.config.base.js`,
+`.prettierrc`). Commit messages are linted by the root `commitlint.config.js`
+via husky, same as `frontend/` and `backend/`.
